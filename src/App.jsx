@@ -15,7 +15,6 @@ function AppLayout() {
   const { pathname } = useLocation();
   const { toast, clearToast } = usePlants();
 
-  // Show bottom nav only on gallery and manage pages
   const showNav = pathname === "/" || pathname === "/manage";
 
   return (

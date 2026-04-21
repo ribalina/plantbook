@@ -1,61 +1,21 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { usePlants } from "../context/PlantContext";
+import { supabase } from "../lib/supabase";
+import { requestNotificationPermission, subscribeToPush } from "../utils/pushSubscription";
 import ThemeToggle from "../components/ThemeToggle";
+import {
+  getWateringFrequencyLabel,
+  getDaysUntilWatering,
+  getTimingBucket,
+  getUrgencyLabel,
+  getUrgencyClass,
+} from "../utils/plantHelpers";
 
 const FILTERS = ["All", "Today", "< 3 days", "This week", "Later"];
 
-/* Map watering frequency → approximate days between waterings */
-function getWateringDays(watering) {
-  const w = watering.toLowerCase();
-  if (w === "daily") return 1;
-  if (w === "twice weekly") return 3;
-  if (w === "weekly") return 7;
-  if (w === "bi-weekly") return 14;
-  if (w === "monthly") return 30;
-  return 7;
-}
-
-/*
- * Simulate days until next watering.
- * Uses a stable per-plant hash so values stay consistent across renders
- * but vary between plants for realistic-looking data.
- */
-function getDaysUntilWatering(plant) {
-  const cycle = getWateringDays(plant.watering);
-  // Simple hash from plant name to get a stable pseudo-random offset
-  let hash = 0;
-  for (let i = 0; i < plant.name.length; i++) {
-    hash = ((hash << 5) - hash + plant.name.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash) % (cycle + 1);
-}
-
-/* Bucket: maps days-until-watering → filter key */
-function getTimingBucket(daysUntil) {
-  if (daysUntil === 0) return "Today";
-  if (daysUntil <= 2) return "< 3 days";
-  if (daysUntil <= 7) return "This week";
-  return "Later";
-}
-
-/* Urgency label shown on cards */
-function getUrgencyLabel(plant) {
-  const days = getDaysUntilWatering(plant);
-  if (days === 0) return "Today";
-  if (days === 1) return "Tomorrow";
-  return `${days} days`;
-}
-
-function getUrgencyClass(plant) {
-  const days = getDaysUntilWatering(plant);
-  if (days <= 1) return "urgency-high";
-  if (days <= 4) return "urgency-med";
-  return "urgency-low";
-}
-
 export default function Gallery() {
-  const { plants } = usePlants();
+  const { plants, loadPlants } = usePlants();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
@@ -68,10 +28,34 @@ export default function Gallery() {
   const [completedIds, setCompletedIds] = useState([]);
   const [guidesOpen, setGuidesOpen] = useState(false);
 
+  /* ── Push notification prompt ── */
+  const [showPushBanner, setShowPushBanner] = useState(false);
+
+  useEffect(() => {
+    if (localStorage.getItem("push-dismissed")) return;
+    if (!("Notification" in window) || !("PushManager" in window)) return;
+    if (Notification.permission === "granted") return;
+    if (Notification.permission === "denied") return;
+    setShowPushBanner(true);
+  }, []);
+
+  const handleEnablePush = async () => {
+    const perm = await requestNotificationPermission();
+    if (perm === "granted") {
+      await subscribeToPush();
+    }
+    setShowPushBanner(false);
+    localStorage.setItem("push-dismissed", "1");
+  };
+
+  const dismissPushBanner = () => {
+    setShowPushBanner(false);
+    localStorage.setItem("push-dismissed", "1");
+  };
+
   const openGuides = () => {
     if (todayMode) {
-      setTodayMode(false);
-      setCompletedIds([]);
+      exitTodayMode();
     }
     setGuidesOpen(true);
   };
@@ -92,10 +76,30 @@ export default function Gallery() {
     setExpandedId(null);
   };
 
-  const exitTodayMode = () => {
+  const exitTodayMode = async () => {
     setTodayMode(false);
-    setCompletedIds([]);
     setExpandedId(null);
+
+    if (completedIds.length > 0) {
+      const now = new Date().toISOString();
+      const updates = completedIds.map((id) => {
+        const plant = plants.find((p) => p.id === id);
+        const days = plant?.watering_frequency_days ?? 7;
+        const next = new Date();
+        next.setDate(next.getDate() + days);
+        return supabase
+          .from("plants")
+          .update({
+            last_watered_at: now,
+            next_watering_at: next.toISOString(),
+          })
+          .eq("id", id);
+      });
+      await Promise.all(updates);
+      await loadPlants();
+    }
+
+    setCompletedIds([]);
   };
 
   /* auto-scroll expanded detail into view */
@@ -107,7 +111,9 @@ export default function Gallery() {
     }
   }, [expandedId]);
 
-  const todayPlants = plants.filter((p) => getDaysUntilWatering(p) === 0);
+  const todayPlants = plants.filter(
+    (p) => getDaysUntilWatering(p.next_watering_at) <= 0
+  );
   const needsWaterToday = todayPlants.length;
   const allTodayCompleted = todayPlants.length > 0 && todayPlants.every((p) => completedIds.includes(p.id));
 
@@ -115,7 +121,7 @@ export default function Gallery() {
   const filterCounts = {};
   FILTERS.forEach((f) => { filterCounts[f] = 0; });
   plants.forEach((p) => {
-    const bucket = getTimingBucket(getDaysUntilWatering(p));
+    const bucket = getTimingBucket(p.next_watering_at);
     filterCounts[bucket]++;
   });
   filterCounts["All"] = plants.length;
@@ -132,13 +138,12 @@ export default function Gallery() {
     : plants.filter((p) => {
         const s =
           p.name.toLowerCase().includes(search.toLowerCase()) ||
-          p.latin.toLowerCase().includes(search.toLowerCase());
+          (p.latin_name || "").toLowerCase().includes(search.toLowerCase());
         const f =
           filter === "All" ||
-          getTimingBucket(getDaysUntilWatering(p)) === filter;
+          getTimingBucket(p.next_watering_at) === filter;
         return s && f;
       });
-
   return (
     <div className="gallery-page">
       {/* Title row */}
@@ -146,6 +151,24 @@ export default function Gallery() {
         <h1 className="gallery-h1">Iva's Little Garden</h1>
         <ThemeToggle />
       </div>
+
+      {/* Push notification opt-in banner */}
+      {showPushBanner && (
+        <div className="push-banner">
+          <div className="push-banner-icon">🔔</div>
+          <div className="push-banner-text">
+            <div className="push-banner-title">Enable daily reminders</div>
+            <div className="push-banner-sub">Get notified at 10 AM when plants need water</div>
+          </div>
+          <button className="push-banner-btn" onClick={handleEnablePush}>Enable</button>
+          <button className="push-banner-dismiss" onClick={dismissPushBanner} aria-label="Dismiss">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {/* 1. Watering Guidelines Card */}
       <div
@@ -392,22 +415,21 @@ export default function Gallery() {
                   </button>
                 )}
                 <div className="g-list-thumb">
-                  {p.imageUrl ? (
-                    <img src={p.imageUrl} alt={p.name} />
+                  {p.image_url ? (
+                    <img src={p.image_url} alt={p.name} />
                   ) : (
                     <span>{p.emoji || "🌿"}</span>
                   )}
                 </div>
                 <div className="g-list-info">
                   <div className="g-card-name">{p.name}</div>
-                  <div className="g-card-latin">{p.latin}</div>
+                  <div className="g-card-latin">{p.latin_name}</div>
                 </div>
-                <div className={`g-urgency-tag ${isCompleted ? "urgency-low" : getUrgencyClass(p)}`}>
+                <div className={`g-urgency-tag ${isCompleted ? "urgency-low" : getUrgencyClass(p.next_watering_at)}`}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />
                   </svg>
-                  {isCompleted ? `${getWateringDays(p.watering)} days` : getUrgencyLabel(p)}
-                </div>
+                {isCompleted ? "Done" : getUrgencyLabel(p.next_watering_at)}                </div>
               </div>
               {!todayMode && expandedId === p.id && (
                 <div className="g-detail-slot" ref={detailRef}>
@@ -433,12 +455,14 @@ export default function Gallery() {
                     onClick={() => todayMode ? toggleCompleted(p.id) : toggleExpand(p.id)}
                   >
                     <div className="g-card-img">
-                      {p.imageUrl ? (
-                        <img src={p.imageUrl} alt={p.name} />
+                      {p.image_url ? (
+                        <img src={p.image_url} alt={p.name} />
                       ) : (
                         <span className="g-card-emoji">{p.emoji || "🌿"}</span>
                       )}
-                      <div className="g-freq-tag">{p.watering}</div>
+                      <div className="g-freq-tag">
+                        {getWateringFrequencyLabel(p.watering_frequency_days)}
+                      </div>
                       {todayMode && (
                         <button
                           className={`g-check g-check--card ${isCompleted ? "g-check--done" : ""}`}
@@ -455,13 +479,11 @@ export default function Gallery() {
                     </div>
                     <div className="g-card-body">
                       <div className="g-card-name">{p.name}</div>
-                      <div className="g-card-latin">{p.latin}</div>
-                      <div className={`g-urgency-tag ${isCompleted ? "urgency-low" : getUrgencyClass(p)}`}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <div className="g-card-latin">{p.latin_name}</div>
+                        <div className={`g-urgency-tag ${isCompleted ? "urgency-low" : getUrgencyClass(p.next_watering_at)}`}>                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />
                         </svg>
-                        {isCompleted ? `${getWateringDays(p.watering)} days` : getUrgencyLabel(p)}
-                      </div>
+                      {isCompleted ? "Done" : getUrgencyLabel(p.next_watering_at)}                      </div>
                     </div>
                   </div>
                   );
@@ -508,7 +530,9 @@ function ExpandedDetail({ plant, navigate, nubPosition }) {
           <div className="g-detail-tile">
             <span className="g-detail-tile-icon">💧</span>
             <span className="g-detail-tile-label">Water</span>
-            <span className="g-detail-tile-value">{p.watering}</span>
+            <span className="g-detail-tile-value">
+              {getWateringFrequencyLabel(p.watering_frequency_days)}
+            </span>          
           </div>
           <div className="g-detail-tile">
             <span className="g-detail-tile-icon">☀️</span>
@@ -523,8 +547,11 @@ function ExpandedDetail({ plant, navigate, nubPosition }) {
         </div>
 
         {/* Notes snippet */}
-        {p.notes && (
-          <div className="g-detail-notes">{p.notes.slice(0, 120)}{p.notes.length > 120 ? "…" : ""}</div>
+        {p.care_notes && (
+          <div className="g-detail-notes">
+            {p.care_notes.slice(0, 120)}
+            {p.care_notes.length > 120 ? "…" : ""}
+          </div>
         )}
 
         {/* Action row */}

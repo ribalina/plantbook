@@ -1,22 +1,14 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { SEEDS } from "../data/seeds";
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { supabase } from "../lib/supabase";
 
 const PlantContext = createContext(null);
 
 export function PlantProvider({ children }) {
-  const [plants, setPlants] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem("pc_plants_v2")) || SEEDS;
-    } catch {
-      return SEEDS;
-    }
-  });
+  const [plants, setPlants] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const loadingRef = useRef(false);
 
   const [toast, setToast] = useState(null);
-
-  useEffect(() => {
-    localStorage.setItem("pc_plants_v2", JSON.stringify(plants));
-  }, [plants]);
 
   const showToast = useCallback((msg) => setToast(msg), []);
   const clearToast = useCallback(() => setToast(null), []);
@@ -34,7 +26,13 @@ export function PlantProvider({ children }) {
   );
 
   const deletePlant = useCallback(
-    (id) => {
+    async (id) => {
+      const { error } = await supabase.from("plants").delete().eq("id", id);
+      if (error) {
+        console.error("Error deleting plant:", error);
+        showToast("Could not remove plant.");
+        return;
+      }
       setPlants((ps) => ps.filter((p) => p.id !== id));
       showToast("Plant removed.");
     },
@@ -46,10 +44,37 @@ export function PlantProvider({ children }) {
     [plants]
   );
 
+  const loadPlants = useCallback(async () => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("plants")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Error loading plants:", error);
+      } else {
+        setPlants(data || []);
+      }
+    } finally {
+      setLoading(false);
+      loadingRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPlants();
+  }, [loadPlants]);
+
   return (
     <PlantContext.Provider
       value={{
         plants,
+        loading,
+        loadPlants,
         savePlant,
         deletePlant,
         getPlant,

@@ -168,7 +168,7 @@
 [data-theme="light"] .g-freq-tag { background: var(--p-900); color: var(--white); border-color: transparent; }
 [data-theme="light"] .recog-card { box-shadow: 0 8px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06); }
 
-html, body { height: 100%; overflow: hidden; }
+html, body { min-height: 100%; overflow-x: hidden; }
 body {
   font-family: var(--ff-body);
   font-size: var(--fs-body);
@@ -188,7 +188,7 @@ body {
   position: relative;
   width: 100%;
   max-width: 430px;
-  height: 100vh;
+  height: 100dvh;
   margin: 0 auto;
   background: var(--bg);
   overflow: hidden;
@@ -211,7 +211,7 @@ body {
 
 .content-area {
   flex: 1;
-  overflow-y: scroll;
+  overflow-y: auto;
   overflow-x: hidden;
   padding-bottom: 70px;
   position: relative;
@@ -545,6 +545,76 @@ body {
 [data-theme="light"] .g-guides--open .g-guides-header {
   border-color: var(--p-700);
 }
+
+/* ── Push Notification Opt-in Banner ── */
+.push-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, rgba(49,146,54,0.10), rgba(49,146,54,0.04));
+  border: 1px solid rgba(49,146,54,0.25);
+  border-radius: var(--r);
+  animation: fadeUp 0.3s ease both;
+}
+
+.push-banner-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.push-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.push-banner-title {
+  font-family: var(--ff-body);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.push-banner-sub {
+  font-family: var(--ff-body);
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.push-banner-btn {
+  padding: 6px 14px;
+  background: var(--p-700);
+  border: none;
+  border-radius: var(--r-pill);
+  color: var(--white);
+  font-family: var(--ff-body);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.push-banner-btn:hover { background: var(--p-800); }
+
+.push-banner-dismiss {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.push-banner-dismiss:hover { color: var(--text); }
 
 /* ── 2. Watering Notification Row ── */
 .g-notify {

@@ -2,15 +2,16 @@ import { useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { usePlants } from "../context/PlantContext";
 import { Dots } from "../components/Toast";
+import { supabase } from "../lib/supabase";
 
 /* ── helpers ── */
 const DAYS = Array.from({ length: 15 }, (_, i) => i + 1);
 
 function parseDayCount(val) {
-  if (typeof val === "number") return Math.max(1, Math.min(15, val));
+  if (typeof val === "number") return Math.max(0, Math.min(15, val));
   if (!val) return 7;
   const m = String(val).match(/Every\s+(\d+)/i);
-  if (m) return Math.max(1, Math.min(15, parseInt(m[1], 10)));
+  if (m) return Math.max(0, Math.min(15, parseInt(m[1], 10)));
   const legacy = { Daily: 1, "Twice weekly": 3, Weekly: 7, "Bi-weekly": 14, Monthly: 15 };
   return legacy[val] || 7;
 }
@@ -25,7 +26,7 @@ function WateringPicker({ value, onChange }) {
 
   const dec = (e) => {
     e.stopPropagation();
-    if (current > 1) onChange(formatDays(current - 1));
+    if (current > 0) onChange(formatDays(current - 1));
   };
   const inc = (e) => {
     e.stopPropagation();
@@ -48,10 +49,36 @@ function WateringPicker({ value, onChange }) {
   );
 }
 
+function addDaysToNow(days) {
+  const now = new Date();
+  const next = new Date(now);
+  next.setDate(next.getDate() + days);
+  return next.toISOString();
+}
+
+function buildPlantPayload(form) {
+  const wateringDays = parseDayCount(form.watering);
+
+  return {
+    name: form.name.trim(),
+    latin_name: form.latin.trim() || null,
+    watering_frequency_days: wateringDays,
+    watering_label: formatDays(wateringDays),
+    watering_schedule_detail: form.wateringDetail.trim() || null,
+    light: form.light.trim() || null,
+    humidity: form.humidity || null,
+    soil: form.soil.trim() || null,
+    care_notes: form.notes.trim() || null,
+    image_url: null,
+    last_watered_at: null,
+    next_watering_at: addDaysToNow(wateringDays),
+  };
+}
+
 export default function PlantForm() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { getPlant, savePlant, showToast } = usePlants();
+  const { getPlant, showToast, loadPlants } = usePlants();
 
   const existing = id ? getPlant(id) : null;
   const isEdit = !!existing;
@@ -71,6 +98,7 @@ export default function PlantForm() {
     };
   });
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [aiNote, setAiNote] = useState(null);
   const [uploadingImage, setUploadingImage] = useState(false);
 
@@ -125,12 +153,35 @@ export default function PlantForm() {
   }
 };
 
-  const handleSave = () => {
-    const plant = { ...form, emoji: form.emoji || "🌿", id: form.id || Date.now() };
-    savePlant(plant);
+  const handleSave = async () => {
+  if (saving) return;
+  setSaving(true);
+  try {
+    const payload = buildPlantPayload(form);
+
+    let error;
+    if (isEdit) {
+      ({ error } = await supabase.from("plants").update(payload).eq("id", existing.id));
+    } else {
+      ({ error } = await supabase.from("plants").insert([payload]));
+    }
+
+    if (error) {
+      console.error("Error saving plant:", error);
+      showToast("Could not save plant.");
+      setSaving(false);
+      return;
+    }
+
     showToast(isEdit ? "Plant updated!" : "Plant added to collection!");
-    navigate(isEdit ? "/manage" : "/");
-  };
+    navigate("/");
+    loadPlants();
+  } catch (err) {
+    console.error(err);
+    showToast("Could not save plant.");
+    setSaving(false);
+  }
+};
 
   return (
     <div className="overlay-screen overlay-screen--full">
@@ -278,8 +329,12 @@ export default function PlantForm() {
             />
           </div>
 
-          <button className="save-plant-btn" onClick={handleSave}>
-            {isEdit ? "💾 Save Changes" : "🌱 Add to Collection"}
+          <button
+            className="save-plant-btn"
+            onClick={handleSave}
+            disabled={saving || !form.name.trim()}
+          >
+            {saving ? <><Dots /> Saving…</> : isEdit ? "💾 Save Changes" : "🌱 Add to Collection"}
           </button>
         </div>
       </div>
