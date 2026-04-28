@@ -3,6 +3,18 @@ import { useNavigate } from "react-router-dom";
 import { usePlants } from "../context/PlantContext";
 import { claudeVision } from "../services/ai";
 
+const UNKNOWN_PLANT = {
+  name: "Unknown Plant",
+  latin: "",
+  watering: "Weekly",
+  light: "Indirect",
+  humidity: "Medium",
+  soil: "Standard potting",
+  notes: "Could not identify — standard tropical houseplant care applied.",
+  wateringDetail: "Water when top inch of soil is dry.",
+  emoji: "🌿",
+};
+
 export default function ScanScreen() {
   const navigate = useNavigate();
   const { savePlant, showToast } = usePlants();
@@ -79,6 +91,8 @@ export default function ScanScreen() {
       if (dataUrl) {
         setCapturedUrl(dataUrl);
         if (videoRef.current) videoRef.current.pause();
+        // Auto-start recognition after capture
+        setTimeout(() => identifyImageWith(dataUrl), 50);
       }
     } else {
       fileRef.current?.click();
@@ -99,35 +113,31 @@ export default function ScanScreen() {
     if (videoRef.current) videoRef.current.pause();
   };
 
-  /* identify via Claude Vision */
-  const identifyImage = async () => {
+  /* identify via Claude Vision — accepts optional dataUrl for freshly captured frames */
+  const identifyImageWith = async (dataUrl) => {
+    if (loading) return; // prevent double-trigger
     setLoading(true);
     let b64 = uploadB64;
     let mtype = uploadType;
-    if (capturedUrl && !uploadB64) {
-      b64 = capturedUrl.split(",")[1];
-      mtype = "image/jpeg";
+    const imgUrl = dataUrl || previewUrl;
+    if (!uploadB64) {
+      const src = dataUrl || capturedUrl;
+      if (src) {
+        b64 = src.split(",")[1];
+        mtype = "image/jpeg";
+      }
     }
     if (!b64) { setLoading(false); return; }
     try {
       const data = await claudeVision(b64, mtype);
-      setResult({ ...data, imageUrl: previewUrl });
+      setResult({ ...data, imageUrl: imgUrl });
     } catch {
-      setResult({
-        name: "Unknown Plant",
-        latin: "",
-        watering: "Weekly",
-        light: "Indirect",
-        humidity: "Medium",
-        soil: "Standard potting",
-        notes: "Could not identify — standard tropical houseplant care applied.",
-        wateringDetail: "Water when top inch of soil is dry.",
-        emoji: "🌿",
-        imageUrl: previewUrl,
-      });
+      setResult({ ...UNKNOWN_PLANT, imageUrl: imgUrl });
     }
     setLoading(false);
   };
+
+  const identifyImage = () => identifyImageWith(null);
 
   /* discard & resume */
   const handleDiscard = () => {
@@ -138,12 +148,34 @@ export default function ScanScreen() {
     if (videoRef.current && hasCamera) videoRef.current.play();
   };
 
-  /* save */
+  /* save — proceed with recognized result */
   const handleSave = () => {
+    if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
     const plant = { ...result, id: Date.now() };
     savePlant(plant);
     showToast("Plant added to collection!");
     navigate("/");
+  };
+
+  /* edit — open PlantForm prefilled with scan data */
+  const handleEdit = () => {
+    if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
+    navigate("/add", {
+      state: {
+        scanData: {
+          name: result?.name || "",
+          latin: result?.latin || "",
+          watering: result?.watering || "Every 7 day/s",
+          light: result?.light || "",
+          humidity: result?.humidity || "Medium",
+          soil: result?.soil || "",
+          notes: result?.notes || "",
+          wateringDetail: result?.wateringDetail || "",
+          emoji: result?.emoji || "🌿",
+          imageUrl: result?.imageUrl || previewUrl || "",
+        },
+      },
+    });
   };
 
   /* flip */
@@ -205,26 +237,33 @@ export default function ScanScreen() {
           </div>
         )}
 
-        {/* FLOATING RECOGNITION CARD */}
-        {result && (
-          <div className="recog-card" onClick={handleSave}>
-            <div className="recog-thumb">
-              {result.imageUrl ? <img src={result.imageUrl} alt="" /> : <span>{result.emoji || "🌿"}</span>}
-            </div>
-            <div className="recog-text">
-              <div className="recog-label">Recognized plant</div>
-              <div className="recog-name">{result.name}</div>
-              {result.latin && <div className="recog-latin">{result.latin}</div>}
-            </div>
-            <button className="recog-add-btn" onClick={(e) => { e.stopPropagation(); handleSave(); }} aria-label="Add plant">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-            </button>
-          </div>
-        )}
       </div>
+
+      {/* FLOATING RECOGNITION CARD — sits above bottom controls */}
+      {result && (
+        <div className="recog-card">
+          <div className="recog-thumb">
+            {result.imageUrl ? <img src={result.imageUrl} alt="" /> : <span>{result.emoji || "🌿"}</span>}
+          </div>
+          <div className="recog-text">
+            <div className="recog-label">Recognized plant</div>
+            <div className="recog-name">{result.name || "Unknown Plant"}</div>
+            {result.latin && <div className="recog-latin">{result.latin}</div>}
+          </div>
+          <button className="recog-edit-btn" onClick={handleEdit} aria-label="Edit plant">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+          </button>
+          <button className="recog-add-btn" onClick={handleSave} aria-label="Add plant">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {/* BOTTOM CONTROLS */}
       {

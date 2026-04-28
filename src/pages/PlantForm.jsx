@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { usePlants } from "../context/PlantContext";
 import { Dots } from "../components/Toast";
 import { supabase } from "../lib/supabase";
@@ -78,13 +78,27 @@ function buildPlantPayload(form) {
 export default function PlantForm() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { getPlant, showToast, loadPlants } = usePlants();
 
+  const scanData = location.state?.scanData || null;
   const existing = id ? getPlant(id) : null;
   const isEdit = !!existing;
 
   const [form, setForm] = useState(() => {
     if (existing) return existing;
+    if (scanData) return {
+      name: scanData.name || "",
+      latin: scanData.latin || "",
+      watering: scanData.watering || "Every 7 day/s",
+      light: scanData.light || "",
+      humidity: scanData.humidity || "Medium",
+      soil: scanData.soil || "",
+      notes: scanData.notes || "",
+      wateringDetail: scanData.wateringDetail || "",
+      emoji: scanData.emoji || "🌿",
+      imageUrl: scanData.imageUrl || "",
+    };
     return {
       name: "",
       latin: "",

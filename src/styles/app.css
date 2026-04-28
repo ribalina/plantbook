@@ -1732,22 +1732,19 @@ body {
    Scan / Camera Screen
 ═══════════════════════════════════════════════════════════════════════════ */
 @keyframes scanEnter {
-  from { transform: translateX(calc(-50% + 100vw)); }
-  to   { transform: translateX(-50%); }
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
 }
 
 @keyframes scanExit {
-  from { transform: translateX(-50%); }
-  to   { transform: translateX(calc(-50% + 100vw)); }
+  from { transform: translateX(0); opacity: 1; }
+  to   { transform: translateX(100%); opacity: 0; }
 }
 
 .scan-screen {
   position: fixed;
   inset: 0;
   width: 100%;
-  max-width: 430px;
-  left: 50%;
-  transform: translateX(-50%);
   background: #000;
   z-index: 400;
   display: flex;
@@ -1808,12 +1805,12 @@ body {
 .scan-close:active { background: rgba(255,255,255,0.1); }
 
 .scan-viewfinder {
-  flex: 1;
+  position: absolute;
+  inset: 0;
   background: #0a0a0a;
   display: flex;
   align-items: center;
   justify-content: center;
-  position: relative;
   overflow: hidden;
 }
 
@@ -1897,12 +1894,18 @@ body {
 }
 
 .scan-controls {
-  flex-shrink: 0;
-  background: #000;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0,0,0,0.30);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   padding: 24px 40px 44px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  z-index: 10;
 }
 
 .cam-gallery-btn {
@@ -2004,8 +2007,8 @@ input[type="file"].hidden-file { display: none; }
 }
 
 .recog-card {
-  position: absolute;
-  bottom: 160px;
+  position: fixed;
+  bottom: 140px;
   left: 5%;
   right: 5%;
   max-width: 90%;
@@ -2019,8 +2022,7 @@ input[type="file"].hidden-file { display: none; }
   box-shadow:
     0 8px 32px rgba(0,0,0,0.18),
     0 2px 8px rgba(0,0,0,0.08);
-  z-index: 10;
-  cursor: pointer;
+  z-index: 420;
   animation: recogSlideUp 0.28s cubic-bezier(0.34,1.4,0.64,1) both;
   transition: transform 0.15s, box-shadow 0.15s;
 }
@@ -2109,6 +2111,30 @@ input[type="file"].hidden-file { display: none; }
 }
 
 .recog-add-btn:active {
+  transform: scale(0.93);
+}
+
+.recog-edit-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.06);
+  border: 1px solid rgba(0,0,0,0.1);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #3A3F3A;
+  transition: transform 0.15s, background 0.15s;
+}
+
+.recog-edit-btn:hover {
+  background: rgba(0,0,0,0.1);
+  transform: scale(1.08);
+}
+
+.recog-edit-btn:active {
   transform: scale(0.93);
 }
 
