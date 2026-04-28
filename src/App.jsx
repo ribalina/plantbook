@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
+import { useState } from "react";
 import { PlantProvider, usePlants } from "./context/PlantContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { Toast } from "./components/Toast";
@@ -8,6 +9,7 @@ import Passport from "./pages/Passport";
 import Manage from "./pages/Manage";
 import PlantForm from "./pages/PlantForm";
 import ScanScreen from "./pages/ScanScreen";
+import LoginScreen from "./pages/LoginScreen";
 import "./styles/app.css";
 
 function AppLayout() {
@@ -42,6 +44,12 @@ function AppLayout() {
 }
 
 export default function App() {
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem("pb_api_key") || "");
+
+  if (!apiKey) {
+    return <LoginScreen onLogin={setApiKey} />;
+  }
+
   return (
     <BrowserRouter>
       <ThemeProvider>
