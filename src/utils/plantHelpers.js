@@ -6,6 +6,29 @@ export function getWateringFrequencyLabel(days) {
   return `Every ${days} days`
 }
 
+/**
+ * Normalize AI identify response into form field shape.
+ * Merges with existing form values — only overwrites if AI provides a value.
+ */
+export function normalizeAIResponse(data, existingForm = {}) {
+  const normalized = {};
+
+  if (data.name) normalized.name = data.name;
+  if (data.latin || data.latin_name) normalized.latin = data.latin || data.latin_name;
+  if (data.watering) normalized.watering = data.watering;
+  if (data.watering_frequency_days) normalized.watering = `Every ${data.watering_frequency_days} day/s`;
+  if (data.light) normalized.light = data.light;
+  if (data.humidity) normalized.humidity = data.humidity;
+  if (data.soil) normalized.soil = data.soil;
+  if (data.notes || data.care_notes) normalized.notes = data.notes || data.care_notes;
+  if (data.wateringDetail || data.watering_schedule_detail) {
+    normalized.wateringDetail = data.wateringDetail || data.watering_schedule_detail;
+  }
+  if (data.emoji) normalized.emoji = data.emoji;
+
+  return { ...existingForm, ...normalized };
+}
+
 export function getDaysUntilWatering(nextWateringAt) {
   if (!nextWateringAt) return null
 

@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { usePlants } from "../context/PlantContext";
 import { Dots } from "../components/Toast";
 import { supabase } from "../lib/supabase";
+import { normalizeAIResponse } from "../utils/plantHelpers";
 
 /* ── helpers ── */
 const DAYS = Array.from({ length: 15 }, (_, i) => i + 1);
@@ -144,18 +145,30 @@ export default function PlantForm() {
   };
 
   const generateAI = async () => {
-  if (!form.name) return;
+  if (!form.imageUrl) {
+    showToast("You need to upload an image of the plant");
+    return;
+  }
 
   setLoading(true);
   setAiNote(null);
 
   try {
-    const res = await fetch("/api/autofill", {
+    // Fetch the uploaded image and convert to base64
+    const imgRes = await fetch(form.imageUrl);
+    const blob = await imgRes.blob();
+    const mimeType = blob.type || "image/jpeg";
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(",")[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+
+    const res = await fetch("/api/identify", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ name: form.name }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageBase64: base64, mimeType }),
     });
 
     const data = await res.json();
@@ -164,10 +177,15 @@ export default function PlantForm() {
       throw new Error(data.error || "AI failed");
     }
 
-    setForm((f) => ({ ...f, ...data }));
-    setAiNote(data.notes || "AI suggestion applied.");
+    if (data.recognized === false) {
+      setAiNote("Plant not recognized — fill in manually.");
+    } else {
+      const normalized = normalizeAIResponse(data, form);
+      setForm((f) => ({ ...f, ...normalized }));
+      setAiNote(data.name ? `Identified: ${data.name}` : "AI suggestion applied.");
+    }
   } catch (err) {
-    setAiNote("Could not generate — please fill in manually.");
+    setAiNote("Could not identify — please fill in manually.");
     console.error(err);
   } finally {
     setLoading(false);
@@ -248,14 +266,14 @@ export default function PlantForm() {
               <button
                 className="ai-generate-btn"
                 onClick={generateAI}
-                disabled={loading || !form.name}
+                disabled={loading || uploadingImage}
               >
                 {loading ? (
                   <>
-                    <Dots /> Generating…
+                    <Dots /> Identifying…
                   </>
                 ) : (
-                  "✨ Auto-fill care info with AI"
+                  "✨ Identify plant from image"
                 )}
               </button>
             </div>

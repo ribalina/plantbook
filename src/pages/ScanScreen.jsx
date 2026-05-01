@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { usePlants } from "../context/PlantContext";
-import { claudeVision } from "../services/ai";
+import { supabase } from "../lib/supabase";
+import { normalizeAIResponse } from "../utils/plantHelpers";
 
 const UNKNOWN_PLANT = {
   name: "Unknown Plant",
@@ -17,7 +18,7 @@ const UNKNOWN_PLANT = {
 
 export default function ScanScreen() {
   const navigate = useNavigate();
-  const { savePlant, showToast } = usePlants();
+  const { savePlant, showToast, loadPlants } = usePlants();
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -113,7 +114,7 @@ export default function ScanScreen() {
     if (videoRef.current) videoRef.current.pause();
   };
 
-  /* identify via Claude Vision — accepts optional dataUrl for freshly captured frames */
+  /* identify via server-side AI — accepts optional dataUrl for freshly captured frames */
   const identifyImageWith = async (dataUrl) => {
     if (loading) return; // prevent double-trigger
     setLoading(true);
@@ -129,8 +130,17 @@ export default function ScanScreen() {
     }
     if (!b64) { setLoading(false); return; }
     try {
-      const data = await claudeVision(b64, mtype);
-      setResult({ ...data, imageUrl: imgUrl });
+      const res = await fetch("/api/identify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: b64, mimeType: mtype }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.recognized === false) {
+        setResult({ ...UNKNOWN_PLANT, imageUrl: imgUrl });
+      } else {
+        setResult({ ...normalizeAIResponse(data), imageUrl: imgUrl });
+      }
     } catch {
       setResult({ ...UNKNOWN_PLANT, imageUrl: imgUrl });
     }
@@ -148,12 +158,45 @@ export default function ScanScreen() {
     if (videoRef.current && hasCamera) videoRef.current.play();
   };
 
-  /* save — proceed with recognized result */
-  const handleSave = () => {
+  /* save — proceed with recognized result, persist to Supabase */
+  const handleSave = async () => {
     if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
-    const plant = { ...result, id: Date.now() };
-    savePlant(plant);
+
+    const parseDays = (val) => {
+      if (!val) return 7;
+      const m = String(val).match(/(\d+)/);
+      return m ? Math.max(1, Math.min(15, parseInt(m[1], 10))) : 7;
+    };
+
+    const wateringDays = parseDays(result?.watering);
+    const now = new Date();
+    const next = new Date(now);
+    next.setDate(next.getDate() + wateringDays);
+
+    const payload = {
+      name: (result?.name || "Unknown Plant").trim(),
+      latin_name: result?.latin?.trim() || null,
+      watering_frequency_days: wateringDays,
+      watering_label: `Every ${wateringDays} day/s`,
+      watering_schedule_detail: result?.wateringDetail?.trim() || null,
+      light: result?.light?.trim() || null,
+      humidity: result?.humidity || "Medium",
+      soil: result?.soil?.trim() || null,
+      care_notes: result?.notes?.trim() || null,
+      image_url: result?.imageUrl || null,
+      last_watered_at: null,
+      next_watering_at: next.toISOString(),
+    };
+
+    const { error } = await supabase.from("plants").insert([payload]);
+    if (error) {
+      console.error("Save error:", error);
+      showToast("Could not save plant.");
+      return;
+    }
+
     showToast("Plant added to collection!");
+    loadPlants();
     navigate("/");
   };
 
