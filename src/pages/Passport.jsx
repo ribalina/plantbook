@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { usePlants } from "../context/PlantContext";
+import { supabase } from "../lib/supabase";
 import ShareModal from "../components/ShareModal";
 
 export default function Passport() {
@@ -26,20 +27,34 @@ export default function Passport() {
       return;
     }
 
-    const toDataUrl = (file) =>
-      new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(new Error("Failed to read file"));
-        reader.readAsDataURL(file);
-      });
-
     try {
-      const memoryPhotos = await Promise.all(images.map((f) => toDataUrl(f)));
+      const uploadedUrls = [];
+      for (const file of images) {
+        const ext = file.name.split(".").pop() || "jpg";
+        const path = `memories/${plant.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const { error } = await supabase.storage.from("plant-images").upload(path, file, {
+          cacheControl: "3600",
+          upsert: false,
+        });
+        if (error) throw error;
+        const { data: urlData } = supabase.storage.from("plant-images").getPublicUrl(path);
+        uploadedUrls.push(urlData.publicUrl);
+      }
+
       const existing = Array.isArray(plant.memories) ? plant.memories : [];
-      savePlant({ ...plant, memories: [...existing, ...memoryPhotos] });
-      showToast(`${memoryPhotos.length} memory photo${memoryPhotos.length > 1 ? "s" : ""} saved.`);
-    } catch {
+      const updatedMemories = [...existing, ...uploadedUrls];
+
+      const { error: dbError } = await supabase
+        .from("plants")
+        .update({ memories: updatedMemories })
+        .eq("id", plant.id);
+
+      if (dbError) throw dbError;
+
+      savePlant({ ...plant, memories: updatedMemories });
+      showToast(`${uploadedUrls.length} memory photo${uploadedUrls.length > 1 ? "s" : ""} saved.`);
+    } catch (err) {
+      console.error("Memory upload failed:", err);
       showToast("Could not upload memories. Please try again.");
     } finally {
       e.target.value = "";

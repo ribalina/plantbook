@@ -69,7 +69,7 @@ function buildPlantPayload(form) {
     humidity: form.humidity || null,
     soil: form.soil.trim() || null,
     care_notes: form.notes.trim() || null,
-    image_url: null,
+    image_url: form.imageUrl || null,
     last_watered_at: null,
     next_watering_at: addDaysToNow(wateringDays),
   };
@@ -118,22 +118,29 @@ export default function PlantForm() {
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const onImageSelect = (e) => {
+  const onImageSelect = async (e) => {
     const file = e.target.files?.[0];
     if (!file || !file.type.startsWith("image/")) return;
 
     setUploadingImage(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      set("imageUrl", reader.result);
-      setUploadingImage(false);
-    };
-    reader.onerror = () => {
-      setUploadingImage(false);
+    try {
+      const ext = file.name.split(".").pop() || "jpg";
+      const path = `plants/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const { error } = await supabase.storage.from("plant-images").upload(path, file, {
+        cacheControl: "3600",
+        upsert: false,
+      });
+      if (error) throw error;
+
+      const { data: urlData } = supabase.storage.from("plant-images").getPublicUrl(path);
+      set("imageUrl", urlData.publicUrl);
+    } catch (err) {
+      console.error("Image upload failed:", err);
       showToast("Could not upload image. Please try again.");
-    };
-    reader.readAsDataURL(file);
-    e.target.value = "";
+    } finally {
+      setUploadingImage(false);
+      e.target.value = "";
+    }
   };
 
   const generateAI = async () => {
