@@ -10,24 +10,25 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Image data required" });
     }
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        input: [
+        model: "gpt-4o",
+        max_tokens: 1000,
+        messages: [
           {
             role: "user",
             content: [
               {
-                type: "input_image",
-                image_url: `data:${mimeType || "image/jpeg"};base64,${imageBase64}`,
+                type: "image_url",
+                image_url: { url: `data:${mimeType || "image/jpeg"};base64,${imageBase64}` },
               },
               {
-                type: "input_text",
+                type: "text",
                 text: `You are a plant identification expert. Identify the plant in this image and return ONLY valid JSON with these exact keys:
 {
   "recognized": true,
@@ -65,7 +66,7 @@ Rules:
     });
 
     const data = await response.json();
-    const text = data.output?.[0]?.content?.[0]?.text;
+    const text = data.choices?.[0]?.message?.content;
 
     if (!text) {
       return res.status(200).json({
