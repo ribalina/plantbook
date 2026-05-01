@@ -81,6 +81,7 @@ Rules:
         notes: "",
         wateringDetail: "",
         emoji: "🌿",
+        _debug: { status: response.status, raw: data },
       });
     }
 
