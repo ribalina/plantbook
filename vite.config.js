@@ -4,7 +4,13 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 3000,
-    open: true,
+    port: parseInt(process.env.PORT) || 5173,
+    proxy: {
+      '/api': {
+        target: 'https://www.plantbook.care',
+        changeOrigin: true,
+        secure: true,
+      },
+    },
   },
 });
