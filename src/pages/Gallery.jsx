@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { usePlants } from "../context/PlantContext";
 import { supabase } from "../lib/supabase";
@@ -10,6 +10,9 @@ import {
   getTimingBucket,
   getUrgencyLabel,
   getUrgencyClass,
+  getThumbnailUrl,
+  isOverdue,
+  getOverdueDays,
 } from "../utils/plantHelpers";
 
 const FILTERS = ["All", "Today", "< 3 days", "This week", "Later"];
@@ -22,6 +25,46 @@ export default function Gallery() {
   const [viewMode, setViewMode] = useState("grid");
   const [expandedId, setExpandedId] = useState(null);
   const detailRef = useRef(null);
+
+  /* restore scroll position and expanded card when returning from passport */
+  const scrollRestoredRef = useRef(false);
+  const pendingScrollRef = useRef(null);
+
+  useLayoutEffect(() => {
+    if (scrollRestoredRef.current) return;
+    const saved = sessionStorage.getItem("gallery-scroll");
+    const savedExpanded = sessionStorage.getItem("gallery-expanded");
+    if (saved && plants.length > 0) {
+      scrollRestoredRef.current = true;
+      sessionStorage.removeItem("gallery-scroll");
+      sessionStorage.removeItem("gallery-expanded");
+      const container = document.querySelector(".content-area");
+      if (savedExpanded) {
+        setExpandedId(savedExpanded);
+        pendingScrollRef.current = savedExpanded;
+      } else if (container) {
+        container.scrollTop = parseInt(saved, 10);
+      }
+    }
+  }, [plants]);
+
+  useEffect(() => {
+    if (pendingScrollRef.current && expandedId) {
+      pendingScrollRef.current = null;
+      requestAnimationFrame(() => {
+        const el = document.querySelector(`[data-plant-id="${expandedId}"]`);
+        if (el) el.scrollIntoView({ behavior: "instant", block: "start" });
+      });
+    }
+  }, [expandedId]);
+
+  const navigateToPassport = (plantId, e) => {
+    e.stopPropagation();
+    const container = document.querySelector(".content-area");
+    sessionStorage.setItem("gallery-scroll", String(container?.scrollTop || 0));
+    sessionStorage.setItem("gallery-expanded", expandedId || "");
+    navigate(`/plant/${plantId}`);
+  };
 
   /* ── Today Mode state ── */
   const [todayMode, setTodayMode] = useState(false);
@@ -102,18 +145,33 @@ export default function Gallery() {
     setCompletedIds([]);
   };
 
-  /* auto-scroll expanded detail into view */
+  /* auto-scroll to show full expanded card + detail */
   useEffect(() => {
-    if (expandedId && detailRef.current) {
-      setTimeout(() => {
-        detailRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }, 60);
-    }
+    if (!expandedId || pendingScrollRef.current) return;
+    let attempts = 0;
+    const tryScroll = () => {
+      const detail = document.querySelector(".g-detail-slot");
+      if (!detail) {
+        if (attempts++ < 10) setTimeout(tryScroll, 100);
+        return;
+      }
+      const scrollContainer = document.querySelector(".content-area") || document.documentElement;
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const detailRect = detail.getBoundingClientRect();
+      const navHeight = 80;
+      const available = containerRect.bottom - navHeight;
+      if (detailRect.bottom > available) {
+        scrollContainer.scrollBy({ top: detailRect.bottom - available + 16, behavior: "smooth" });
+      }
+    };
+    setTimeout(tryScroll, 150);
   }, [expandedId]);
 
   const todayPlants = plants.filter(
     (p) => getDaysUntilWatering(p.next_watering_at) <= 0
   );
+  const overduePlants = plants.filter((p) => isOverdue(p.next_watering_at));
+  const overdueCount = overduePlants.length;
   const needsWaterToday = todayPlants.length;
   const allTodayCompleted = todayPlants.length > 0 && todayPlants.every((p) => completedIds.includes(p.id));
 
@@ -152,56 +210,99 @@ export default function Gallery() {
         <ThemeToggle />
       </div>
 
-      {/* Push notification opt-in banner */}
-      {showPushBanner && (
-        <div className="push-banner">
-          <div className="push-banner-icon">🔔</div>
-          <div className="push-banner-text">
-            <div className="push-banner-title">Enable daily reminders</div>
-            <div className="push-banner-sub">Get notified at 10 AM when plants need water</div>
+      {/* 1. Primary watering row: Watering card + Guidelines button */}
+      <div className="g-watering-row">
+        {needsWaterToday > 0 && !allTodayCompleted ? (
+          <div
+            className={`g-notify g-notify--primary ${todayMode ? "g-notify--progress" : overdueCount > 0 ? "g-notify--overdue" : "g-notify--alert"}`}
+            onClick={!todayMode ? enterTodayMode : undefined}
+            role={!todayMode ? "button" : undefined}
+            tabIndex={!todayMode ? 0 : undefined}
+          >
+            <div className="g-notify-icon">
+              <svg width="20" height="20  " viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />
+              </svg>
+            </div>
+            <div className="g-notify-text">
+              <div className="g-notify-title">
+                {todayMode
+                  ? `${completedIds.length} of ${needsWaterToday} watered`
+                  : overdueCount > 0
+                    ? `${overdueCount} plant${overdueCount > 1 ? "s" : ""} overdue`
+                    : `${needsWaterToday} plant${needsWaterToday > 1 ? "s" : ""} need water`}
+              </div>
+            </div>
+            {todayMode ? (
+              <button className="g-notify-close" onClick={exitTodayMode} aria-label="Exit today mode">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            ) : (
+              <div className="g-notify-action">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </div>
+            )}
           </div>
-          <button className="push-banner-btn" onClick={handleEnablePush}>Enable</button>
-          <button className="push-banner-dismiss" onClick={dismissPushBanner} aria-label="Dismiss">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-      )}
+        ) : allTodayCompleted ? (
+          <div className="g-notify g-notify--primary g-notify--done">
+            <div className="g-notify-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+            <div className="g-notify-text">
+              <div className="g-notify-title">All plants watered today</div>
+            </div>
+            {todayMode && (
+              <button className="g-notify-close" onClick={exitTodayMode} aria-label="Exit today mode">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="g-notify g-notify--primary">
+            <div className="g-notify-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+            <div className="g-notify-text">
+              <div className="g-notify-title">All plants are happy</div>
+            </div>
+          </div>
+        )}
 
-      {/* 1. Watering Guidelines Card */}
-      <div
-        className={`g-guides ${guidesOpen ? "g-guides--open" : ""}`}
-        onClick={!guidesOpen ? openGuides : undefined}
-        role={!guidesOpen ? "button" : undefined}
-        tabIndex={!guidesOpen ? 0 : undefined}
-      >
-        <div className="g-guides-header">
-          <div className="g-guides-icon">
+        {!todayMode && (
+          <button className="g-guides-btn" onClick={openGuides} aria-label="Watering guidelines">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinejoin="round" strokeWidth="2">
               <path strokeLinecap="round" d="M14.5 15.5h-5"/>
               <path d="M5 20V4a1 1 0 011-1h6.172a2 2 0 011.414.586l4.828 4.828A2 2 0 0119 9.828V20a1 1 0 01-1 1H6a1 1 0 01-1-1z"/>
               <path d="M12 3v6a1 1 0 001 1h6"/>
             </svg>
-          </div>
-          <div className="g-guides-label">Watering Guidelines</div>
-          {guidesOpen ? (
+          </button>
+        )}
+      </div>
+
+      {/* Guidelines panel (when open) */}
+      {guidesOpen && (
+        <div className="g-guides g-guides--open">
+          <div className="g-guides-header">
+            <div className="g-guides-label">Watering Guidelines</div>
             <button className="g-notify-close" onClick={(e) => { e.stopPropagation(); setGuidesOpen(false); }} aria-label="Close guidelines">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="18" y1="6" x2="6" y2="18" />
                 <line x1="6" y1="6" x2="18" y2="18" />
               </svg>
             </button>
-          ) : (
-            <div className="g-notify-action">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </div>
-          )}
-        </div>
-        {guidesOpen && (
+          </div>
           <div className="g-guides-body">
             <div className="g-guides-section">
               <div className="g-guides-heading">Before watering</div>
@@ -237,84 +338,24 @@ export default function Gallery() {
               </ul>
             </div>
           </div>
-        )}
-      </div>
-
-      {/* 2. Today Watering Trigger / Active Bar */}
-      {needsWaterToday > 0 && !allTodayCompleted && (
-        <div
-          className={`g-notify ${todayMode ? "g-notify--progress" : "g-notify--alert"}`}
-          onClick={!todayMode ? enterTodayMode : undefined}
-          role={!todayMode ? "button" : undefined}
-          tabIndex={!todayMode ? 0 : undefined}
-        >
-          <div className="g-notify-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />
-            </svg>
-          </div>
-          <div className="g-notify-text">
-            <div className="g-notify-title">
-              {todayMode ? "Watering Mode" : "Today's Watering"}
-            </div>
-            <div className="g-notify-sub">
-              {todayMode
-                ? `${completedIds.length} of ${needsWaterToday} completed`
-                : `${needsWaterToday} plant${needsWaterToday > 1 ? "s" : ""} need water today`}
-            </div>
-          </div>
-          {todayMode ? (
-            <button className="g-notify-close" onClick={exitTodayMode} aria-label="Exit today mode">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          ) : (
-            <div className="g-notify-action">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </div>
-          )}
         </div>
       )}
 
-      {/* Completed state */}
-      {allTodayCompleted && (
-        <div className="g-notify g-notify--done">
-          <div className="g-notify-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="20 6 9 17 4 12" />
+      {/* Push notification opt-in banner */}
+      {showPushBanner && (
+        <div className="push-banner">
+          <div className="push-banner-icon">🔔</div>
+          <div className="push-banner-text">
+            <div className="push-banner-title">Enable daily reminders</div>
+            <div className="push-banner-sub">Get notified at 10 AM when plants need water</div>
+          </div>
+          <button className="push-banner-btn" onClick={handleEnablePush}>Enable</button>
+          <button className="push-banner-dismiss" onClick={dismissPushBanner} aria-label="Dismiss">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
-          </div>
-          <div className="g-notify-text">
-            <div className="g-notify-title">All done!</div>
-            <div className="g-notify-sub">All plants watered for today</div>
-          </div>
-          {todayMode && (
-            <button className="g-notify-close" onClick={exitTodayMode} aria-label="Exit today mode">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* No plants need water today */}
-      {needsWaterToday === 0 && (
-        <div className="g-notify">
-          <div className="g-notify-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-          </div>
-          <div className="g-notify-text">
-            <div className="g-notify-title">Next Watering</div>
-            <div className="g-notify-sub">All plants are happy for now</div>
-          </div>
+          </button>
         </div>
       )}
 
@@ -334,6 +375,7 @@ export default function Gallery() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
+          {/*}
           <button
             className="g-view-toggle"
             onClick={() => setViewMode(viewMode === "grid" ? "list" : "grid")}
@@ -356,7 +398,7 @@ export default function Gallery() {
                 <rect x="14" y="14" width="7" height="7" rx="1" />
               </svg>
             )}
-          </button>
+          </button>*/}
         </div>
         <div className="g-filter-group">
           {FILTERS.map((f) => (
@@ -415,8 +457,8 @@ export default function Gallery() {
                   </button>
                 )}
                 <div className="g-list-thumb">
-                  {p.image_url ? (
-                    <img src={p.image_url} alt={p.name} />
+                  {(p.thumbnail_url || p.image_url) ? (
+                    <img src={getThumbnailUrl(p.thumbnail_url || p.image_url, 80)} alt={p.name} loading="lazy" onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.querySelector('span') || e.target.insertAdjacentHTML('afterend', '<span>🌿</span>'); }} />
                   ) : (
                     <span>{p.emoji || "🌿"}</span>
                   )}
@@ -433,7 +475,7 @@ export default function Gallery() {
               </div>
               {!todayMode && expandedId === p.id && (
                 <div className="g-detail-slot" ref={detailRef}>
-                  <ExpandedDetail plant={p} navigate={navigate} />
+                  <ExpandedDetail plant={p} navigate={navigate} navigateToPassport={navigateToPassport} />
                 </div>
               )}
             </div>
@@ -450,13 +492,14 @@ export default function Gallery() {
                   return (
                   <div
                     key={p.id}
+                    data-plant-id={p.id}
                     className={`g-card ${expandedId === p.id ? "g-card--active" : ""} ${isCompleted ? "g-today-done" : ""}`}
                     style={{ animationDelay: `${(ri * 2 + ci) * 0.05}s` }}
                     onClick={() => todayMode ? toggleCompleted(p.id) : toggleExpand(p.id)}
                   >
                     <div className="g-card-img">
-                      {p.image_url ? (
-                        <img src={p.image_url} alt={p.name} />
+                      {(p.thumbnail_url || p.image_url) ? (
+                        <img src={getThumbnailUrl(p.thumbnail_url || p.image_url, 200)} alt={p.name} loading="lazy" onError={(e) => { e.target.style.display = 'none'; e.target.insertAdjacentHTML('afterend', '<span class="g-card-emoji">🌿</span>'); }} />
                       ) : (
                         <span className="g-card-emoji">{p.emoji || "🌿"}</span>
                       )}
@@ -495,6 +538,7 @@ export default function Gallery() {
                   <ExpandedDetail
                     plant={pair.find((p) => p.id === expandedId)}
                     navigate={navigate}
+                    navigateToPassport={navigateToPassport}
                     nubPosition={pair.findIndex((p) => p.id === expandedId) === 0 ? "25%" : "75%"}
                   />
                 </div>
@@ -517,7 +561,7 @@ function chunkPairs(arr) {
 }
 
 /* ── Expanded Detail Panel ── */
-function ExpandedDetail({ plant, navigate, nubPosition }) {
+function ExpandedDetail({ plant, navigate, navigateToPassport, nubPosition }) {
   const p = plant;
   return (
     <div
@@ -558,7 +602,7 @@ function ExpandedDetail({ plant, navigate, nubPosition }) {
         <div className="g-detail-actions">
           <button
             className="g-detail-btn g-detail-btn--primary"
-            onClick={(e) => { e.stopPropagation(); navigate(`/plant/${p.id}`); }}
+            onClick={(e) => navigateToPassport(p.id, e)}
           >
             View full passport
           </button>

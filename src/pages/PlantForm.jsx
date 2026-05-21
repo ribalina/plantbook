@@ -4,6 +4,7 @@ import { usePlants } from "../context/PlantContext";
 import { Dots } from "../components/Toast";
 import { supabase } from "../lib/supabase";
 import { normalizeAIResponse } from "../utils/plantHelpers";
+import { uploadPlantImage, createMemoriesFolder } from "../services/plantStorage";
 
 /* ── helpers ── */
 const DAYS = Array.from({ length: 15 }, (_, i) => i + 1);
@@ -71,6 +72,7 @@ function buildPlantPayload(form) {
     soil: form.soil.trim() || null,
     care_notes: form.notes.trim() || null,
     image_url: form.imageUrl || null,
+    thumbnail_url: form.imageUrl || null,
     last_watered_at: null,
     next_watering_at: addDaysToNow(wateringDays),
   };
@@ -87,7 +89,17 @@ export default function PlantForm() {
   const isEdit = !!existing;
 
   const [form, setForm] = useState(() => {
-    if (existing) return existing;
+    if (existing) return {
+      name: existing.name || "",
+      latin: existing.latin_name || "",
+      watering: existing.watering_label || `Every ${existing.watering_frequency_days || 7} day/s`,
+      light: existing.light || "",
+      humidity: existing.humidity || "Medium",
+      soil: existing.soil || "",
+      notes: existing.care_notes || "",
+      wateringDetail: existing.watering_schedule_detail || "",
+      imageUrl: existing.thumbnail_url || existing.image_url || "",
+    };
     if (scanData) return {
       name: scanData.name || "",
       latin: scanData.latin || "",
@@ -116,6 +128,7 @@ export default function PlantForm() {
   const [saving, setSaving] = useState(false);
   const [aiNote, setAiNote] = useState(null);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -125,16 +138,9 @@ export default function PlantForm() {
 
     setUploadingImage(true);
     try {
-      const ext = file.name.split(".").pop() || "jpg";
-      const path = `plants/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-      const { error } = await supabase.storage.from("plant-images").upload(path, file, {
-        cacheControl: "3600",
-        upsert: false,
-      });
-      if (error) throw error;
-
-      const { data: urlData } = supabase.storage.from("plant-images").getPublicUrl(path);
-      set("imageUrl", urlData.publicUrl);
+      const result = await uploadPlantImage(file, form.name || "plant");
+      if (!result) throw new Error("Upload failed");
+      set("imageUrl", result.publicUrl);
     } catch (err) {
       console.error("Image upload failed:", err);
       showToast("Could not upload image. Please try again.");
@@ -198,11 +204,11 @@ export default function PlantForm() {
   try {
     const payload = buildPlantPayload(form);
 
-    let error;
+    let error, insertData;
     if (isEdit) {
       ({ error } = await supabase.from("plants").update(payload).eq("id", existing.id));
     } else {
-      ({ error } = await supabase.from("plants").insert([payload]));
+      ({ data: insertData, error } = await supabase.from("plants").insert([payload]).select());
     }
 
     if (error) {
@@ -211,6 +217,8 @@ export default function PlantForm() {
       setSaving(false);
       return;
     }
+
+    if (!isEdit && insertData?.[0]) createMemoriesFolder(form.name, insertData[0].id);
 
     showToast(isEdit ? "Plant updated!" : "Plant added to collection!");
     navigate("/");
@@ -231,18 +239,26 @@ export default function PlantForm() {
       <div className="overlay-body">
         <div className="form-body">
           <div className="form-top-row">
-            <label className="image-upload-card" htmlFor="plant-image-upload">
+            <div className="image-upload-card image-upload-card--square">
               {form.imageUrl ? (
-                <img src={form.imageUrl} alt="Plant profile" className="image-upload-preview" />
+                <img
+                  src={form.imageUrl}
+                  alt="Plant profile"
+                  className="image-upload-preview"
+                  onClick={(e) => { e.preventDefault(); setViewerOpen(true); }}
+                />
               ) : (
-                <div className="image-upload-empty">
+                <label htmlFor="plant-image-upload" className="image-upload-empty">
                   <span className="image-upload-icon" aria-hidden="true">🖼️</span>
                   <span className="image-upload-title">Plant profile image</span>
                   <span className="image-upload-sub">Tap to upload</span>
-                </div>
+                </label>
+              )}
+              {form.imageUrl && (
+                <label htmlFor="plant-image-upload" className="image-upload-change">Change</label>
               )}
               {uploadingImage && <span className="image-upload-loading">Uploading…</span>}
-            </label>
+            </div>
 
             <input
               id="plant-image-upload"
@@ -377,6 +393,13 @@ export default function PlantForm() {
           </button>
         </div>
       </div>
+
+      {/* Fullscreen image viewer */}
+      {viewerOpen && form.imageUrl && (
+        <div className="image-viewer-overlay" onClick={() => setViewerOpen(false)}>
+          <img src={form.imageUrl} alt="Plant full view" className="image-viewer-img" />
+        </div>
+      )}
     </div>
   );
 }

@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { usePlants } from "../context/PlantContext";
 import { supabase } from "../lib/supabase";
 import { normalizeAIResponse } from "../utils/plantHelpers";
+import { uploadPlantImageBase64, createMemoriesFolder } from "../services/plantStorage";
+import { PiMagicWand } from "react-icons/pi";
 
 const UNKNOWN_PLANT = {
   name: "Unknown Plant",
@@ -33,6 +35,22 @@ export default function ScanScreen() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [exiting, setExiting] = useState(false);
+
+  // Restore scan state when returning from edit page
+  useEffect(() => {
+    const saved = sessionStorage.getItem("scan-state");
+    if (saved) {
+      sessionStorage.removeItem("scan-state");
+      try {
+        const s = JSON.parse(saved);
+        if (s.result) setResult(s.result);
+        if (s.capturedUrl) setCapturedUrl(s.capturedUrl);
+        if (s.uploadedUrl) setUploadedUrl(s.uploadedUrl);
+        if (s.uploadB64) setUploadB64(s.uploadB64);
+        if (s.uploadType) setUploadType(s.uploadType);
+      } catch {}
+    }
+  }, []);
 
   const previewUrl = capturedUrl || uploadedUrl;
 
@@ -104,12 +122,19 @@ export default function ScanScreen() {
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setUploadedUrl(URL.createObjectURL(file));
+    const objectUrl = URL.createObjectURL(file);
+    setUploadedUrl(objectUrl);
     setUploadType(file.type || "image/jpeg");
     setResult(null);
     setCapturedUrl(null);
     const fr = new FileReader();
-    fr.onload = (ev) => setUploadB64(ev.target.result.split(",")[1]);
+    fr.onload = (ev) => {
+      const dataUrl = ev.target.result;
+      const b64 = dataUrl.split(",")[1];
+      setUploadB64(b64);
+      // Auto-start recognition with the dataUrl so it doesn't depend on state
+      setTimeout(() => identifyImageWith(dataUrl), 50);
+    };
     fr.readAsDataURL(file);
     if (videoRef.current) videoRef.current.pause();
   };
@@ -173,8 +198,11 @@ export default function ScanScreen() {
     const next = new Date(now);
     next.setDate(next.getDate() + wateringDays);
 
+    // Insert plant first to get the ID
+    const plantName = (result?.name || "Unknown Plant").trim();
+
     const payload = {
-      name: (result?.name || "Unknown Plant").trim(),
+      name: plantName,
       latin_name: result?.latin?.trim() || null,
       watering_frequency_days: wateringDays,
       watering_label: `Every ${wateringDays} day/s`,
@@ -183,17 +211,35 @@ export default function ScanScreen() {
       humidity: result?.humidity || "Medium",
       soil: result?.soil?.trim() || null,
       care_notes: result?.notes?.trim() || null,
-      image_url: result?.imageUrl || null,
+      image_url: null,
+      thumbnail_url: null,
       last_watered_at: null,
       next_watering_at: next.toISOString(),
     };
 
-    const { error } = await supabase.from("plants").insert([payload]);
+    const { data: insertData, error } = await supabase.from("plants").insert([payload]).select();
     if (error) {
-      console.error("Save error:", error);
+      console.error("Save error:", error.message, error.details, error.hint, error.code);
       showToast("Could not save plant.");
       return;
     }
+    const newPlant = insertData[0];
+
+    // Upload image using the plant ID for unique folder
+    const b64 = uploadB64 || (capturedUrl ? capturedUrl.split(",")[1] : null);
+    let imageUrl = null;
+    if (b64) {
+      const uploaded = await uploadPlantImageBase64(b64, uploadType || "image/jpeg", plantName, newPlant.id);
+      imageUrl = uploaded?.publicUrl || null;
+    }
+
+    // Update plant with image URL
+    if (imageUrl) {
+      await supabase.from("plants").update({ image_url: imageUrl, thumbnail_url: imageUrl }).eq("id", newPlant.id);
+    }
+
+    // Create memories folder for this plant
+    createMemoriesFolder(plantName, newPlant.id);
 
     showToast("Plant added to collection!");
     loadPlants();
@@ -201,7 +247,15 @@ export default function ScanScreen() {
   };
 
   /* edit — open PlantForm prefilled with scan data */
-  const handleEdit = () => {
+  const handleEdit = async () => {
+    // Save scan state before navigating so it restores on back
+    sessionStorage.setItem("scan-state", JSON.stringify({
+      result,
+      capturedUrl,
+      uploadedUrl,
+      uploadB64,
+      uploadType,
+    }));
     if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
     navigate("/add", {
       state: {
@@ -215,14 +269,21 @@ export default function ScanScreen() {
           notes: result?.notes || "",
           wateringDetail: result?.wateringDetail || "",
           emoji: result?.emoji || "🌿",
-          imageUrl: result?.imageUrl || previewUrl || "",
+          imageUrl: result?.imageUrl || "",
         },
+        fromScan: true,
       },
     });
   };
 
-  /* flip */
+  /* flip / retry recognition */
   const handleFlip = () => {
+    if (result) {
+      // Keep image, clear result and re-run recognition immediately
+      setResult(null);
+      setTimeout(() => identifyImage(), 50);
+      return;
+    }
     setCapturedUrl(null);
     setResult(null);
     setFacingMode((f) => (f === "environment" ? "user" : "environment"));
@@ -336,12 +397,8 @@ export default function ScanScreen() {
             </div>
           </div>
 
-          <button className="cam-flip-btn" onClick={handleFlip} aria-label="Flip camera">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M1 4v6h6" />
-              <path d="M23 20v-6h-6" />
-              <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" />
-            </svg>
+          <button className="cam-flip-btn" onClick={handleFlip} aria-label="Re-identify">
+            <PiMagicWand size={22} />
           </button>
         </div>
       }

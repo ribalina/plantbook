@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { usePlants } from "../context/PlantContext";
+import { getThumbnailUrl } from "../utils/plantHelpers";
 import ThemeToggle from "../components/ThemeToggle";
 
 export default function Manage() {
@@ -38,11 +39,10 @@ export default function Manage() {
         {plants.map((p) => (
           <div key={p.id} className="manage-row">
             <div className="manage-thumb">
-              {p.imageUrl ? (
-                <img src={p.imageUrl} alt="" />
-              ) : (
-                <span>{p.emoji || "🌿"}</span>
-              )}
+              {(p.thumbnail_url || p.image_url) ? (
+                <img src={getThumbnailUrl(p.thumbnail_url || p.image_url, 80)} alt="" loading="lazy" onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = ''; }} />
+              ) : null}
+              <span style={(p.thumbnail_url || p.image_url) ? { display: 'none' } : {}}>🌿</span>
             </div>
             <div className="manage-info">
               <div className="manage-name">{p.name}</div>

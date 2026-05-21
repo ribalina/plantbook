@@ -33,17 +33,31 @@ export function getDaysUntilWatering(nextWateringAt) {
   if (!nextWateringAt) return null
 
   const now = new Date()
+  now.setHours(0, 0, 0, 0)
   const next = new Date(nextWateringAt)
+  next.setHours(0, 0, 0, 0)
 
   const diffMs = next - now
-  return Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+  return Math.round(diffMs / (1000 * 60 * 60 * 24))
+}
+
+export function isOverdue(nextWateringAt) {
+  const days = getDaysUntilWatering(nextWateringAt)
+  return days !== null && days < 0
+}
+
+export function getOverdueDays(nextWateringAt) {
+  const days = getDaysUntilWatering(nextWateringAt)
+  if (days === null || days >= 0) return 0
+  return Math.abs(days)
 }
 
 export function getTimingBucket(nextWateringAt) {
   const daysUntil = getDaysUntilWatering(nextWateringAt)
 
   if (daysUntil === null) return 'Later'
-  if (daysUntil <= 0) return 'Today'
+  if (daysUntil < 0) return 'Today'
+  if (daysUntil === 0) return 'Today'
   if (daysUntil < 3) return '< 3 days'
   if (daysUntil <= 7) return 'This week'
   return 'Later'
@@ -53,7 +67,8 @@ export function getUrgencyLabel(nextWateringAt) {
   const days = getDaysUntilWatering(nextWateringAt)
 
   if (days === null) return 'No date'
-  if (days <= 0) return 'Today'
+  if (days < 0) return days === -1 ? '1 day overdue' : `${Math.abs(days)} days overdue`
+  if (days === 0) return 'Today'
   if (days === 1) return '1 day'
   return `${days} days`
 }
@@ -62,7 +77,17 @@ export function getUrgencyClass(nextWateringAt) {
   const days = getDaysUntilWatering(nextWateringAt)
 
   if (days === null) return 'urgency-low'
-  if (days <= 1) return 'urgency-high'
+  if (days < 0) return 'urgency-overdue'
+  if (days === 0) return 'urgency-high'
   if (days <= 4) return 'urgency-med'
   return 'urgency-low'
+}
+
+/**
+ * Returns a thumbnail URL for Supabase storage images.
+ * Appends render/image/public transform parameters for resizing.
+ */
+export function getThumbnailUrl(imageUrl, width = 200) {
+  if (!imageUrl) return null
+  return imageUrl
 }

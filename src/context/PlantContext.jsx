@@ -51,7 +51,7 @@ export function PlantProvider({ children }) {
     try {
       const { data, error } = await supabase
         .from("plants")
-        .select("*")
+        .select("id,name,latin_name,image_url,thumbnail_url,watering_frequency_days,watering_label,watering_schedule_detail,light,humidity,soil,care_notes,last_watered_at,next_watering_at,created_at")
         .order("created_at", { ascending: false });
 
       if (error) {
